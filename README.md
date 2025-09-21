@@ -25,5 +25,5 @@ The result is a self-reinforcing system where growth in demand directly translat
 
 ## Resources
 
-- **[Full Specification](./UTBC+POL%20spec.%20v1.1.0.md)** - Technical implementation details and economic analysis
+- **[Specification](./UTBC+POL%20spec.%20v1.1.0.md)** - Technical implementation details and economic analysis
 - **[Simulator](./simulator.js)** - Interactive tokenomics modeling tool
