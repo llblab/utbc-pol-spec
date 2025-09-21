@@ -11,6 +11,8 @@ Living protocol for continuous self-improvement and knowledge evolution:
 5. **Evolutionary Feedback**: Protocol improvements should inform but not override project architectural decisions
 6. **Knowledge Hygiene**: Preserve the distinction between "how we document" vs "what we document"
 7. **Reflexive Integrity**: The context must model the separation it mandates between protocol and project layers
+8. **Emergent Elegance**: Solutions often require multiple iterations—initial working code reveals constraints that guide toward more elegant patterns
+9. **Interface as Contract**: Consistent naming across components enables polymorphic behavior without adapters—a form of duck typing discipline
 
 ---
 
@@ -49,6 +51,11 @@ A token launch mechanism specification that combines unidirectional bonding curv
   - **Rationale**: Maximizes liquidity depth when XYK price lags TBC price, adds bulk liquidity first then swaps remainder
   - **Trade-offs**: Additional computational complexity but significantly better capital efficiency
 
+- **Router as Universal Gateway**: All token swaps must flow through SmartRouter, even POL operations
+  - **Rationale**: Ensures optimal price discovery, fee collection, and consistent system behavior
+  - **Trade-offs**: Introduces circular dependencies requiring elegant resolution patterns
+  - **Resolution**: Closure-based dependency injection preserves immutability while enabling late binding
+
 ---
 
 ### 4. Project Structure
@@ -74,6 +81,9 @@ A token launch mechanism specification that combines unidirectional bonding curv
 - **KISS Principle**: Balance simplicity with accuracy—oversimplification that distorts core mechanics is worse than appropriate complexity
 - **Sequential Abstraction**: Documentation should guide readers logically from problem to solution without assuming prior knowledge
 - **Precision Over Brevity**: Never sacrifice correctness for simplicity (e.g., "every purchase creates liquidity" when only TBC routes do)
+- **Iteration Toward Elegance**: First make it work, then make it elegant—functional patterns often emerge from imperative constraints
+- **Simulation vs Production**: Fallback behaviors aid testing but reveal interface inconsistencies that demand normalization
+- **Closure as Architecture**: JavaScript closures solve dependency injection more elegantly than class-based patterns
 
 ---
 
@@ -140,3 +150,32 @@ A token launch mechanism specification that combines unidirectional bonding curv
    - **Documentation Insight**: Discovered critical balance between simplicity and accuracy—oversimplification (e.g., "every purchase creates liquidity") distorts understanding more than appropriate technical detail
    - **Abstraction Lesson**: Multiple attempts revealed that extreme minimalism can sacrifice correctness; final version achieved KISS without losing precision
    - **Reader Navigation**: Effective documentation guides readers sequentially through problem→solution→mechanics→result without assuming context
+
+7. **POL Zap Router Integration Fix**:
+   - **Task**: Fix POL Zap mechanism to use SmartRouter for foreign-to-native swaps instead of direct XYK pool access
+   - **Implementation**: Refactored AllInZap strategy to route excess foreign tokens through SmartRouter, ensuring optimal price discovery and fee collection
+   - **Impact**: POL now benefits from router's intelligent routing (UTBC vs XYK selection) and contributes to protocol fee accumulation
+   - **Architectural Insight**: All token swaps must flow through SmartRouter to maintain system coherence—direct pool access bypasses critical price optimization and fee mechanisms
+   - **Technical Evolution**: Journey through three dependency resolution approaches: setter injection → constructor closure → strategy wrapper
+   - **Elegant Solution**: Closure-based strategy wrapper captures router reference post-initialization—functional programming triumph over OOP patterns
+   - **Validation**: Test suite confirms router fee collection during POL operations, proving successful integration
+   - **Design Pattern**: Factory creates components sequentially, wraps strategy with router-aware closure—immutability without mutation
+   - **Meta-Learning**: The path to elegance required exploring "less elegant" solutions first—each attempt revealed constraints that guided the final design
+
+8. **Interface Normalization for Swap Methods**:
+   - **Task**: Normalize swap method return interfaces between SmartRouter and XykPool for consistency
+   - **Impact**: Unified interface allows AllInZap to handle both router and direct XYK pool swaps transparently with fallback support
+   - **Discovery Process**: Fallback implementation revealed interface mismatch—simulation flexibility exposed production design flaw
+   - **Technical Insight**: Consistent naming conventions enable duck typing—JavaScript's dynamic nature becomes strength with discipline
+   - **Design Principle**: Interface uniformity reduces cognitive load and prevents subtle bugs from field name mismatches
+   - **Philosophical Tension**: Helper functions vs interface normalization—choosing consistency over convenience
+   - **Testing Wisdom**: Interface tests validate contracts, not just behavior—structural typing needs explicit verification
+
+9. **Architectural Patterns Crystallization**:
+   - **Emergent Patterns**: Router integration revealed broader architectural principles applicable beyond this specific case
+   - **Closure Over Class**: Functional patterns with closures solved circular dependencies more elegantly than OOP approaches
+   - **Interface as Documentation**: Consistent field naming becomes self-documenting API contract
+   - **Test-Driven Discovery**: Edge cases in testing (fallback behavior) exposed design inconsistencies
+   - **Iterative Refinement**: Each "working" solution revealed opportunities for greater elegance
+   - **Simulation Fidelity**: Simulator flexibility (optional router) forced interface discipline that benefits production code
+   - **Meta-Insight**: The journey from "make it work" to "make it elegant" is itself valuable documentation

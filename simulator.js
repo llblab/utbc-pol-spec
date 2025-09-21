@@ -1,14 +1,30 @@
+// @ts-check
+
 /**
- * UTBC+POL Simulator
+ * @name `UTBC+POL` Simulator
+ * @note This simulator is not a production-ready implementation, but rather serves for preliminary economic testing, parameter optimization, and business logic formalization.
+ * @units Balances and prices use `PRECISION` (10^12) for accuracy. All fractional values (fees, slopes, shares) use `PPM` (Parts Per Million, 10^6) and require a '_ppm' suffix in naming.
+ * @version 1.2.0
  * @module simulator.js
  */
+
+/** @typedef {{ user_ppm: bigint, pol_ppm: bigint, treasury_ppm: bigint, team_ppm: bigint }} ShareConfig */
+/** @typedef {{ price_initial: bigint, slope_ppm: bigint, fee_xyk_ppm: bigint, fee_router_ppm: bigint, min_trade_foreign: bigint, min_initial_foreign: bigint, shares: ShareConfig }} SystemConfig */
+/** @typedef {{ fee_ppm: bigint }} XykPoolConfig */
+/** @typedef {{ lp_minted: bigint, native_used: bigint, foreign_used: bigint, native_rest: bigint, foreign_rest: bigint }} LiquidityResult */
+/** @typedef {XykPool | SmartRouter} Swapper */
+/** @typedef {{ price_initial: bigint, slope_ppm: bigint, shares: ShareConfig }} UtbcMinterConfig */
+/** @typedef {{ min_trade_foreign: bigint }} FeeManagerConfig */
+/** @typedef {{ fee_router_ppm: bigint, min_trade_foreign: bigint, min_initial_foreign: bigint }} SmartRouterConfig */
 
 export const DECIMALS = 12n;
 export const PRECISION = 10n ** DECIMALS;
 export const PPM = 1_000_000n;
 
-const DEFAULT_CONFIG = /** @type {SystemConfig} */ ({
-  price_initial: 1_000_000_000n,
+export const DEFAULT_CONFIG = /** @type {SystemConfig} */ ({
+  min_initial_foreign: 100n * PRECISION,
+  min_trade_foreign: PRECISION / 100n,
+  price_initial: PRECISION / 1_000n,
   slope_ppm: 1_000n,
   fee_xyk_ppm: 3_000n,
   fee_router_ppm: 2_000n,
@@ -20,54 +36,68 @@ const DEFAULT_CONFIG = /** @type {SystemConfig} */ ({
   },
 });
 
-/** @typedef {{ user_ppm: bigint, pol_ppm: bigint, treasury_ppm: bigint, team_ppm: bigint }} ShareConfig */
-/** @typedef {{ price_initial: bigint, slope_ppm: bigint, fee_xyk_ppm: bigint, fee_router_ppm: bigint, shares: ShareConfig }} SystemConfig */
-/** @typedef {{ fee_ppm: bigint }} XykPoolConfig */
-/** @typedef {{ lp_minted: bigint, native_used: bigint, foreign_used: bigint, native_rest: bigint, foreign_rest: bigint }} LiquidityResult */
-/** @typedef {(xyk_pool: XykPool, native_amount: bigint, foreign_amount: bigint) => LiquidityResult} ZapExecute */
-/** @typedef {{ execute: ZapExecute }} PolZapStrategy */
-/** @typedef {{ price_initial: bigint, slope_ppm: bigint, shares: ShareConfig }} UtbcMinterConfig */
-/** @typedef {{ fee_router_ppm: bigint }} SmartRouterConfig */
+export class BigMath {
+  static mul_div(
+    /** @type {bigint} */ a,
+    /** @type {bigint} */ b,
+    /** @type {bigint} */ c,
+  ) {
+    if (c === 0n) {
+      throw new Error("Division by zero");
+    }
+    return (a * b) / c;
+  }
 
-export const mul_div = (
-  /** @type {bigint} */ a,
-  /** @type {bigint} */ b,
-  /** @type {bigint} */ c,
-) => {
-  if (c === 0n) {
-    throw new Error("Division by zero");
+  static div_ceil(/** @type {bigint} */ a, /** @type {bigint} */ b) {
+    if (b === 0n) {
+      throw new Error("Division by zero");
+    }
+    return a % b === 0n ? a / b : a / b + 1n;
   }
-  return b === c ? a : (a * b) / c;
-};
 
-export const div_ceil = (/** @type {bigint} */ a, /** @type {bigint} */ b) => {
-  if (b === 0n) {
-    throw new Error("Division by zero");
+  static isqrt(/** @type {bigint} */ n) {
+    if (n < 0n) {
+      throw new Error("Square root of negative number");
+    }
+    if (n < 2n) {
+      return n;
+    }
+    let x = n;
+    let y = (x + 1n) / 2n;
+    while (y < x) {
+      x = y;
+      y = (x + n / x) / 2n;
+    }
+    return x;
   }
-  return (a + b - 1n) / b;
-};
 
-export const min = (/** @type {bigint} */ a, /** @type {bigint} */ b) =>
-  a < b ? a : b;
-export const max = (/** @type {bigint} */ a, /** @type {bigint} */ b) =>
-  a > b ? a : b;
-export const abs = (/** @type {bigint} */ a) => (a < 0n ? -a : a);
+  static min(/** @type {bigint} */ a, /** @type {bigint} */ b) {
+    return a < b ? a : b;
+  }
 
-export const isqrt = (/** @type {bigint} */ n) => {
-  if (n < 0n) {
-    throw new Error("Square root of negative");
+  static max(/** @type {bigint} */ a, /** @type {bigint} */ b) {
+    return a > b ? a : b;
   }
-  if (n === 0n) {
-    return 0n;
+
+  static abs(/** @type {bigint} */ a) {
+    return a < 0n ? -a : a;
   }
-  let x0 = n;
-  let x1 = n / 2n + 1n;
-  while (x1 < x0) {
-    x0 = x1;
-    x1 = (x0 + n / x0) >> 1n;
+
+  static calculate_swap_output(
+    /** @type {bigint} */ amount_in,
+    /** @type {bigint} */ reserve_in,
+    /** @type {bigint} */ reserve_out,
+    /** @type {bigint} */ fee_ppm,
+  ) {
+    if (amount_in <= 0n || reserve_in <= 0n || reserve_out <= 0n) {
+      return 0n;
+    }
+    const amount_in_with_fee = amount_in * (PPM - fee_ppm);
+    const numerator = amount_in_with_fee * reserve_out;
+    const denominator = reserve_in * PPM + amount_in_with_fee;
+    return numerator / denominator;
   }
-  return x0;
-};
+}
 
 export class XykPool {
   constructor(/** @type {XykPoolConfig} */ config) {
@@ -80,56 +110,88 @@ export class XykPool {
     this.supply_lp = 0n;
   }
 
-  price_spot() {
+  get_price() {
     if (this.reserve_native === 0n) {
-      return 0n;
+      throw new Error("Cannot calculate price with zero native reserves");
     }
-    return mul_div(this.reserve_foreign, PRECISION, this.reserve_native);
+    if (this.reserve_foreign === 0n) {
+      throw new Error("Cannot calculate price with zero foreign reserves");
+    }
+    return BigMath.mul_div(
+      this.reserve_foreign,
+      PRECISION,
+      this.reserve_native,
+    );
   }
 
   has_liquidity() {
     return this.reserve_native > 0n && this.reserve_foreign > 0n;
   }
 
-  add_liquidity(
-    /** @type {bigint} */ native_amount,
-    /** @type {bigint} */ foreign_amount,
-  ) {
-    if (native_amount <= 0n || foreign_amount <= 0n) {
+  get_out_native(/** @type {bigint} */ foreign) {
+    if (foreign <= 0n || !this.has_liquidity()) {
+      return 0n;
+    }
+    return BigMath.calculate_swap_output(
+      foreign,
+      this.reserve_foreign,
+      this.reserve_native,
+      this.fee_ppm,
+    );
+  }
+
+  get_out_foreign(/** @type {bigint} */ native) {
+    if (native <= 0n || !this.has_liquidity()) {
+      return 0n;
+    }
+    return BigMath.calculate_swap_output(
+      native,
+      this.reserve_native,
+      this.reserve_foreign,
+      this.fee_ppm,
+    );
+  }
+
+  add_liquidity(/** @type {bigint} */ native, /** @type {bigint} */ foreign) {
+    if (native <= 0n || foreign <= 0n) {
       throw new Error("Amounts must be positive");
     }
     if (!this.has_liquidity()) {
-      const lp_minted = isqrt(native_amount * foreign_amount);
+      const lp_minted = BigMath.isqrt(native * foreign);
       if (lp_minted === 0n) {
         throw new Error("Insufficient initial liquidity");
       }
-      this.reserve_native = native_amount;
-      this.reserve_foreign = foreign_amount;
+      this.reserve_native = native;
+      this.reserve_foreign = foreign;
       this.supply_lp = lp_minted;
       return {
         lp_minted,
-        native_used: native_amount,
-        foreign_used: foreign_amount,
+        native_used: native,
+        foreign_used: foreign,
         native_rest: 0n,
         foreign_rest: 0n,
       };
     }
-    const lp_from_native = mul_div(
-      native_amount,
+    const lp_from_native = BigMath.mul_div(
+      native,
       this.supply_lp,
       this.reserve_native,
     );
-    const lp_from_foreign = mul_div(
-      foreign_amount,
+    const lp_from_foreign = BigMath.mul_div(
+      foreign,
       this.supply_lp,
       this.reserve_foreign,
     );
-    const lp_minted = min(lp_from_native, lp_from_foreign);
+    const lp_minted = BigMath.min(lp_from_native, lp_from_foreign);
     if (lp_minted === 0n) {
       throw new Error("Insufficient liquidity provided");
     }
-    const native_used = mul_div(this.reserve_native, lp_minted, this.supply_lp);
-    const foreign_used = mul_div(
+    const native_used = BigMath.mul_div(
+      this.reserve_native,
+      lp_minted,
+      this.supply_lp,
+    );
+    const foreign_used = BigMath.mul_div(
       this.reserve_foreign,
       lp_minted,
       this.supply_lp,
@@ -141,77 +203,43 @@ export class XykPool {
       lp_minted,
       native_used,
       foreign_used,
-      native_rest: native_amount - native_used,
-      foreign_rest: foreign_amount - foreign_used,
+      native_rest: native - native_used,
+      foreign_rest: foreign - foreign_used,
     };
   }
 
-  get_out_native(/** @type {bigint} */ foreign_amount) {
-    if (foreign_amount <= 0n || !this.has_liquidity()) {
-      return 0n;
-    }
-    return this.#calculate_output(
-      foreign_amount,
-      this.reserve_native,
-      this.reserve_foreign,
-    );
-  }
-
-  get_out_foreign(/** @type {bigint} */ native_amount) {
-    if (native_amount <= 0n || !this.has_liquidity()) {
-      return 0n;
-    }
-    return this.#calculate_output(
-      native_amount,
-      this.reserve_foreign,
-      this.reserve_native,
-    );
-  }
-
   swap_native_to_foreign(
-    /** @type {bigint} */ native_amount,
+    /** @type {bigint} */ native,
     /** @type {bigint} */ foreign_min = 0n,
   ) {
-    if (native_amount <= 0n) {
+    if (native <= 0n) {
       throw new Error("Amount must be positive");
     }
     if (!this.has_liquidity()) {
       throw new Error("No liquidity");
     }
-    const foreign_out = this.get_out_foreign(native_amount);
+    const foreign_out = this.get_out_foreign(native);
     if (foreign_out < foreign_min) {
       throw new Error("Slippage exceeded");
     }
-    return this.#execute_swap(native_amount, foreign_out, true);
+    return this.#execute_swap(native, foreign_out, true);
   }
 
   swap_foreign_to_native(
-    /** @type {bigint} */ foreign_amount,
+    /** @type {bigint} */ foreign,
     /** @type {bigint} */ native_min = 0n,
   ) {
-    if (foreign_amount <= 0n) {
+    if (foreign <= 0n) {
       throw new Error("Amount must be positive");
     }
     if (!this.has_liquidity()) {
       throw new Error("No liquidity");
     }
-    const native_out = this.get_out_native(foreign_amount);
+    const native_out = this.get_out_native(foreign);
     if (native_out < native_min) {
       throw new Error("Slippage exceeded");
     }
-    return this.#execute_swap(foreign_amount, native_out, false);
-  }
-
-  #calculate_output(
-    /** @type {bigint} */ amount_in,
-    /** @type {bigint} */ reserve_out,
-    /** @type {bigint} */ reserve_in,
-  ) {
-    const factor_fee = PPM - this.fee_ppm;
-    const amount_with_fee = amount_in * factor_fee;
-    const numerator = amount_with_fee * reserve_out;
-    const denominator = reserve_in * PPM + amount_with_fee;
-    return denominator > 0n ? numerator / denominator : 0n;
+    return this.#execute_swap(foreign, native_out, false);
   }
 
   #execute_swap(
@@ -219,7 +247,7 @@ export class XykPool {
     /** @type {bigint} */ amount_out,
     /** @type {boolean} */ native_to_foreign,
   ) {
-    const price_before = this.price_spot();
+    const price_before = this.get_price();
     if (native_to_foreign) {
       this.reserve_native += amount_in;
       this.reserve_foreign -= amount_out;
@@ -227,99 +255,34 @@ export class XykPool {
       this.reserve_foreign += amount_in;
       this.reserve_native -= amount_out;
     }
-    const price_after = this.price_spot();
-    const impact_ppm =
+    const price_after = this.get_price();
+    const price_impact_ppm =
       price_before > 0n
-        ? mul_div(abs(price_after - price_before), PPM, price_before)
+        ? BigMath.mul_div(
+            BigMath.abs(price_after - price_before),
+            PPM,
+            price_before,
+          )
         : 0n;
     return {
-      amount_in,
-      amount_out,
+      native_in: native_to_foreign ? amount_in : 0n,
+      native_out: native_to_foreign ? 0n : amount_out,
+      foreign_in: native_to_foreign ? 0n : amount_in,
+      foreign_out: native_to_foreign ? amount_out : 0n,
       price_before,
       price_after,
-      impact_ppm,
+      price_impact_ppm,
     };
   }
 }
 
-export class AllInZap {
-  execute(
-    /** @type {XykPool} */ xyk_pool,
-    /** @type {bigint} */ native_amount,
-    /** @type {bigint} */ foreign_amount,
-  ) {
-    let result = {
-      lp_minted: 0n,
-      native_used: 0n,
-      foreign_used: 0n,
-      native_rest: native_amount,
-      foreign_rest: foreign_amount,
-    };
-    if (native_amount === 0n && foreign_amount === 0n) {
-      return result;
-    }
-    if (!xyk_pool.has_liquidity()) {
-      if (native_amount > 0n && foreign_amount > 0n) {
-        try {
-          return xyk_pool.add_liquidity(native_amount, foreign_amount);
-        } catch {
-          return result;
-        }
-      }
-      return result;
-    }
-    if (native_amount > 0n && foreign_amount > 0n) {
-      const pool_ratio = mul_div(
-        xyk_pool.reserve_foreign,
-        PRECISION,
-        xyk_pool.reserve_native,
-      );
-      const foreign_by_native = mul_div(native_amount, pool_ratio, PRECISION);
-      const [native_to_add, foreign_to_add] =
-        foreign_by_native <= foreign_amount
-          ? [native_amount, foreign_by_native]
-          : [mul_div(foreign_amount, PRECISION, pool_ratio), foreign_amount];
-      if (native_to_add > 0n && foreign_to_add > 0n) {
-        try {
-          const add_result = xyk_pool.add_liquidity(
-            native_to_add,
-            foreign_to_add,
-          );
-          result = {
-            lp_minted: add_result.lp_minted,
-            native_used: add_result.native_used,
-            foreign_used: add_result.foreign_used,
-            native_rest: native_amount - add_result.native_used,
-            foreign_rest: foreign_amount - add_result.foreign_used,
-          };
-        } catch {
-          // Continue to swap phase
-        }
-      }
-    }
-    if (result.foreign_rest > 0n) {
-      try {
-        const swap_result = xyk_pool.swap_foreign_to_native(
-          result.foreign_rest,
-        );
-        result.native_rest += swap_result.amount_out;
-        result.foreign_used += result.foreign_rest;
-        result.foreign_rest = 0n;
-      } catch {
-        // Swap failed, keep foreign in buffer
-      }
-    }
-    return result;
-  }
-}
-
+/**
+ * `Protocol-Owned Liquidity` Manager
+ */
 export class PolManager {
-  constructor(
-    /** @type {XykPool} */ xyk_pool,
-    /** @type {PolZapStrategy} */ strategy,
-  ) {
+  constructor(/** @type {XykPool} */ xyk_pool) {
     this.xyk_pool = xyk_pool;
-    this.strategy = strategy;
+    this.swapper = /** @type {Swapper} */ (xyk_pool);
     this.balance_lp = 0n;
     this.contributed_native = 0n;
     this.contributed_foreign = 0n;
@@ -327,41 +290,190 @@ export class PolManager {
     this.buffer_foreign = 0n;
   }
 
-  add_liquidity(
-    /** @type {bigint} */ native_amount,
-    /** @type {bigint} */ foreign_amount,
-  ) {
-    const total_native = this.buffer_native + native_amount;
-    const total_foreign = this.buffer_foreign + foreign_amount;
-    if (total_native === 0n && total_foreign === 0n) {
-      return {
-        lp_minted: 0n,
-        native_used: 0n,
-        foreign_used: 0n,
-        buffered_native: this.buffer_native,
-        buffered_foreign: this.buffer_foreign,
-      };
+  set_swapper(/** @type {Swapper} */ swapper) {
+    this.swapper = swapper;
+  }
+
+  add_liquidity(/** @type {bigint} */ native, /** @type {bigint} */ foreign) {
+    if (
+      native === 0n &&
+      foreign === 0n &&
+      this.buffer_native === 0n &&
+      this.buffer_foreign === 0n
+    ) {
+      return this.#create_liquidity_result(0n, 0n, 0n);
     }
-    const zap_result = this.strategy.execute(
-      this.xyk_pool,
-      total_native,
-      total_foreign,
+    // Branch 1: Pool initialization (first UTBC mint ONLY)
+    // - Happens exactly once when pool doesn't exist
+    // - Uses direct XYK add_liquidity with all available tokens
+    // - Sets initial price based on POL allocation from first mint
+    // - Does NOT use Zap strategy (no swapping, no ratio matching)
+    if (!this.xyk_pool.has_liquidity()) {
+      const init_result = this.#try_initialize_pool(native, foreign);
+      if (init_result.success) {
+        // Pool initialized successfully with first mint's POL allocation
+        return this.#create_liquidity_result(
+          init_result.lp_minted,
+          init_result.native_used,
+          init_result.foreign_used,
+        );
+      } else {
+        // Initialization failed or insufficient tokens - everything stays in buffers
+        return this.#create_liquidity_result(0n, 0n, 0n);
+      }
+    }
+    // Branch 2: Zap strategy for existing pool (all subsequent mints)
+    // - Uses AllInZap to maximize liquidity depth
+    // - Maintains pool ratio, swaps excess foreign through router
+    // - Sophisticated capital efficiency optimization
+    const zap_result = this.#execute_zap_and_update(native, foreign);
+    return this.#create_liquidity_result(
+      zap_result.lp_minted,
+      zap_result.native_used,
+      zap_result.foreign_used,
     );
-    this.balance_lp += zap_result.lp_minted;
-    this.contributed_native += zap_result.native_used;
-    this.contributed_foreign += zap_result.foreign_used;
-    this.buffer_native = zap_result.native_rest;
-    this.buffer_foreign = zap_result.foreign_rest;
+  }
+
+  #create_liquidity_result(
+    /** @type {bigint} */ lp_minted,
+    /** @type {bigint} */ native_used,
+    /** @type {bigint} */ foreign_used,
+  ) {
     return {
-      lp_minted: zap_result.lp_minted,
-      native_used: zap_result.native_used,
-      foreign_used: zap_result.foreign_used,
+      lp_minted,
+      native_used,
+      foreign_used,
       buffered_native: this.buffer_native,
       buffered_foreign: this.buffer_foreign,
     };
   }
+
+  /**
+   * Initialize XYK pool with first mint's POL allocation
+   * This is NOT a zap operation - it's direct pool bootstrapping
+   * Only called once when pool doesn't exist yet
+   */
+  #try_initialize_pool(
+    /** @type {bigint} */ native,
+    /** @type {bigint} */ foreign,
+  ) {
+    const total_native = this.buffer_native + native;
+    const total_foreign = this.buffer_foreign + foreign;
+    if (total_native === 0n || total_foreign === 0n) {
+      this.buffer_native = total_native;
+      this.buffer_foreign = total_foreign;
+      return {
+        success: false,
+        lp_minted: 0n,
+        native_used: 0n,
+        foreign_used: 0n,
+      };
+    }
+    try {
+      const result = this.xyk_pool.add_liquidity(total_native, total_foreign);
+      this.balance_lp += result.lp_minted;
+      this.contributed_native += result.native_used;
+      this.contributed_foreign += result.foreign_used;
+      this.buffer_native = result.native_rest;
+      this.buffer_foreign = result.foreign_rest;
+      return {
+        success: true,
+        lp_minted: result.lp_minted,
+        native_used: result.native_used,
+        foreign_used: result.foreign_used,
+      };
+    } catch {
+      this.buffer_native = total_native;
+      this.buffer_foreign = total_foreign;
+      return {
+        success: false,
+        lp_minted: 0n,
+        native_used: 0n,
+        foreign_used: 0n,
+      };
+    }
+  }
+
+  /**
+   * Executes the "zap" mechanism for existing pools:
+   * 1. Adds balanced liquidity while preserving the pool's ratio
+   * 2. Swaps any excess foreign tokens for native tokens
+   * 3. Keeps tokens in the buffers for future use
+   * This maximizes LP depth while handling imbalanced inputs.
+   */
+  #execute_zap_and_update(
+    /** @type {bigint} */ native,
+    /** @type {bigint} */ foreign,
+  ) {
+    const total_native = this.buffer_native + native;
+    const total_foreign = this.buffer_foreign + foreign;
+    let native_rest = total_native;
+    let foreign_rest = total_foreign;
+    let lp_minted = 0n;
+    let native_used = 0n;
+    let foreign_used = 0n;
+    // Step 1: Add balanced liquidity if we have both tokens
+    if (native_rest > 0n && foreign_rest > 0n) {
+      // Calculate ratio-preserving amounts
+      const foreign_by_native = BigMath.mul_div(
+        native_rest,
+        this.xyk_pool.reserve_foreign,
+        this.xyk_pool.reserve_native,
+      );
+      const [native_to_add, foreign_to_add] =
+        foreign_by_native <= foreign_rest
+          ? [native_rest, foreign_by_native]
+          : [
+              BigMath.mul_div(
+                foreign_rest,
+                this.xyk_pool.reserve_native,
+                this.xyk_pool.reserve_foreign,
+              ),
+              foreign_rest,
+            ];
+      if (native_to_add > 0n && foreign_to_add > 0n) {
+        try {
+          const add_result = this.xyk_pool.add_liquidity(
+            native_to_add,
+            foreign_to_add,
+          );
+          lp_minted = add_result.lp_minted;
+          native_used = add_result.native_used;
+          foreign_used = add_result.foreign_used;
+          native_rest -= add_result.native_used;
+          foreign_rest -= add_result.foreign_used;
+        } catch {
+          // Liquidity addition failed, keep everything for swap attempt
+        }
+      }
+    }
+    // Step 2: Swap excess foreign for native if needed
+    if (foreign_rest > 0n) {
+      try {
+        const swap_result = this.swapper.swap_foreign_to_native(foreign_rest);
+        native_rest += swap_result.native_out;
+        foreign_used += foreign_rest;
+        foreign_rest = 0n;
+      } catch {
+        // Swap failed, keep foreign in buffer
+      }
+    }
+    this.balance_lp += lp_minted;
+    this.contributed_native += native_used;
+    this.contributed_foreign += foreign_used;
+    this.buffer_native = native_rest;
+    this.buffer_foreign = foreign_rest;
+    return {
+      lp_minted,
+      native_used,
+      foreign_used,
+    };
+  }
 }
 
+/**
+ * `Unidirectional Token Bonding Curve` Minter
+ */
 export class UtbcMinter {
   constructor(
     /** @type {PolManager} */ pol_manager,
@@ -386,65 +498,71 @@ export class UtbcMinter {
     }
   }
 
-  price_spot() {
-    return this.price_initial + mul_div(this.slope_ppm, this.supply, PPM);
+  get_price() {
+    const slope_component = BigMath.mul_div(
+      BigMath.mul_div(this.price_initial, this.slope_ppm, PPM),
+      this.supply,
+      PRECISION,
+    );
+    return this.price_initial + slope_component;
   }
 
-  calculate_mint(/** @type {bigint} */ foreign_amount) {
-    if (foreign_amount <= 0n) {
+  calculate_mint(/** @type {bigint} */ foreign) {
+    if (foreign <= 0n) {
       return 0n;
     }
     const price_initial = this.price_initial;
     const slope = this.slope_ppm;
     const supply = this.supply;
     if (slope === 0n) {
-      return mul_div(foreign_amount, PRECISION, price_initial);
+      return BigMath.mul_div(foreign, PRECISION, price_initial);
     }
-    const a = slope;
-    const b = 2n * (price_initial * PPM + slope * supply);
-    const c = -2n * PPM * foreign_amount;
+    const a = price_initial * slope * PRECISION;
+    const b = 2n * price_initial * (slope * supply + PPM * PRECISION);
+    const c = -2n * PPM * foreign;
     const discriminant = b * b - 4n * a * c;
     if (discriminant < 0n) {
       return 0n;
     }
-    const sqrt_discriminant = isqrt(discriminant);
+    const sqrt_discriminant = BigMath.isqrt(discriminant);
     const numerator = sqrt_discriminant - b;
     if (numerator <= 0n) {
       return 0n;
     }
-    return numerator / (2n * a);
+    const x_base = numerator / (2n * a);
+    return x_base * PRECISION;
   }
 
-  mint(/** @type {bigint} */ foreign_amount) {
-    const price_before = this.price_spot();
-    const minted = this.calculate_mint(foreign_amount);
-    if (minted === 0n) {
+  mint_native(/** @type {bigint} */ foreign_in) {
+    const price_before = this.get_price();
+    const total_native = this.calculate_mint(foreign_in);
+    if (total_native === 0n) {
       throw new Error("Insufficient amount");
     }
-    this.supply += minted;
-    const distribution = this.#distribute(minted);
+    this.supply += total_native;
+    const distribution = this.#distribute(total_native);
     this.treasury += distribution.treasury;
     this.team += distribution.team;
     const pol_result = this.pol_manager.add_liquidity(
       distribution.pol,
-      foreign_amount,
+      foreign_in,
     );
-    const price_after = this.price_spot();
+    const price_after = this.get_price();
     return {
-      minted,
+      foreign_in,
+      total_native,
       user_native: distribution.user,
       pol_native: distribution.pol,
       treasury_native: distribution.treasury,
       team_native: distribution.team,
-      foreign_amount,
       price_before,
       price_after,
       pol: pol_result,
     };
   }
 
-  preview(/** @type {bigint} */ foreign_amount) {
-    const minted = this.calculate_mint(foreign_amount);
+  get_mint_quote(/** @type {bigint} */ foreign) {
+    const minted = this.calculate_mint(foreign);
     if (minted === 0n) {
       return null;
     }
@@ -454,12 +572,93 @@ export class UtbcMinter {
     };
   }
 
-  #distribute(/** @type {bigint} */ minted_amount) {
-    const user = mul_div(minted_amount, this.shares.user_ppm, PPM);
-    const pol = mul_div(minted_amount, this.shares.pol_ppm, PPM);
-    const treasury = mul_div(minted_amount, this.shares.treasury_ppm, PPM);
-    const team = minted_amount - (user + pol + treasury);
+  burn_native(/** @type {bigint} */ amount) {
+    if (amount <= 0n) {
+      throw new Error("Burn amount must be positive");
+    }
+    if (this.supply < amount) {
+      throw new Error(
+        `Insufficient supply for burn: ${this.supply} < ${amount}`,
+      );
+    }
+    const supply_before = this.supply;
+    this.supply -= amount;
+    return {
+      native_burned: amount,
+      supply_before,
+      supply_after: this.supply,
+    };
+  }
+
+  #distribute(/** @type {bigint} */ minted) {
+    const user = BigMath.mul_div(minted, this.shares.user_ppm, PPM);
+    const pol = BigMath.mul_div(minted, this.shares.pol_ppm, PPM);
+    const treasury = BigMath.mul_div(minted, this.shares.treasury_ppm, PPM);
+    const team = BigMath.mul_div(minted, this.shares.team_ppm, PPM);
     return { user, pol, treasury, team };
+  }
+}
+
+export class FeeManager {
+  constructor(
+    /** @type {XykPool} */ xyk_pool,
+    /** @type {UtbcMinter} */ utbc_minter,
+    /** @type {FeeManagerConfig} */ config,
+  ) {
+    this.xyk_pool = xyk_pool;
+    this.utbc_minter = utbc_minter;
+    this.min_trade_foreign = config.min_trade_foreign;
+    this.buffer_foreign = 0n;
+    this.total_native_burned = 0n;
+    this.total_foreign_swapped = 0n;
+  }
+
+  receive_fee_native(/** @type {bigint} */ native) {
+    if (native <= 0n) return;
+    const result = this.#execute_burn(native, 0n);
+    this.total_native_burned += result.native_burned;
+  }
+
+  receive_fee_foreign(/** @type {bigint} */ foreign) {
+    if (foreign <= 0n) return;
+    const total_foreign = this.buffer_foreign + foreign;
+    const result = this.#execute_burn(0n, total_foreign);
+    this.buffer_foreign = result.foreign_buffered;
+    this.total_native_burned += result.native_burned;
+    this.total_foreign_swapped += result.foreign_swapped;
+  }
+
+  #execute_burn(
+    /** @type {bigint} */ native_fee,
+    /** @type {bigint} */ foreign_fee,
+  ) {
+    let result = {
+      native_burned: 0n,
+      foreign_swapped: 0n,
+      foreign_buffered: foreign_fee,
+      native_to_burn: native_fee,
+      foreign_to_swap: 0n,
+    };
+    if (
+      foreign_fee >= this.min_trade_foreign &&
+      this.xyk_pool.has_liquidity()
+    ) {
+      try {
+        // Execute swap using XYK pool only
+        const swap_result = this.xyk_pool.swap_foreign_to_native(foreign_fee);
+        result.foreign_to_swap = foreign_fee;
+        result.foreign_swapped = foreign_fee;
+        result.foreign_buffered = 0n;
+        result.native_to_burn += swap_result.native_out;
+      } catch {
+        // Swap failed, keep foreign in buffer
+      }
+    }
+    if (result.native_to_burn > 0n) {
+      this.utbc_minter.burn_native(result.native_to_burn);
+      result.native_burned = result.native_to_burn;
+    }
+    return result;
   }
 }
 
@@ -467,131 +666,188 @@ export class SmartRouter {
   constructor(
     /** @type {XykPool} */ xyk_pool,
     /** @type {UtbcMinter} */ utbc_minter,
+    /** @type {FeeManager} */ fee_manager,
     /** @type {SmartRouterConfig} */ config,
   ) {
     this.xyk_pool = xyk_pool;
     this.utbc_minter = utbc_minter;
-    this.fee_ppm = config.fee_router_ppm;
-    this.accumulated_fee = 0n;
+    this.fee_manager = fee_manager;
+    this.fee_router_ppm = config.fee_router_ppm;
+    this.min_trade_foreign = config.min_trade_foreign;
+    this.min_initial_foreign = config.min_initial_foreign;
   }
 
-  quote_best_route(/** @type {bigint} */ foreign_amount) {
-    if (foreign_amount <= 0n) {
+  get_best_route(/** @type {bigint} */ foreign) {
+    if (foreign <= 0n) {
       return null;
     }
-    const { fee, net } = this.#preview_fee(foreign_amount);
-    const utbc_quote = this.utbc_minter.preview(net);
+    const { fee, net } = this.#calculate_fee(foreign);
+    const utbc_quote = this.utbc_minter.get_mint_quote(net);
     const utbc_out = utbc_quote?.user ?? 0n;
-    const xyk_out = this.xyk_pool.get_out_native(net);
+    const xyk_out = this.xyk_pool.has_liquidity()
+      ? this.xyk_pool.get_out_native(net)
+      : 0n;
     const utbc_viable = utbc_quote && utbc_out > 0n;
     const xyk_viable = xyk_out > 0n;
     if (!utbc_viable && !xyk_viable) {
-      return { best: "NONE", out: 0n, foreign_amount, net, fee };
+      return {
+        best: "NONE",
+        native_out: 0n,
+        foreign_in: foreign,
+        foreign_net: net,
+        foreign_fee: fee,
+      };
     }
     const use_utbc = utbc_viable && utbc_out >= xyk_out;
     return {
       best: use_utbc ? "UTBC" : "XYK",
-      out: use_utbc ? utbc_out : xyk_out,
-      foreign_amount,
-      net,
-      fee,
+      foreign_in: foreign,
+      native_out: use_utbc ? utbc_out : xyk_out,
+      foreign_net: net,
+      foreign_fee: fee,
     };
   }
 
   swap_foreign_to_native(
-    /** @type {bigint} */ foreign_amount,
+    /** @type {bigint} */ foreign_in,
     /** @type {bigint} */ native_min = 0n,
   ) {
-    if (foreign_amount <= 0n) {
-      throw new Error("Amount must be positive");
+    this.#validate_swap_input(
+      foreign_in,
+      this.min_trade_foreign,
+      `Amount below minimum threshold (${this.min_trade_foreign} foreign)`,
+    );
+    // Check if this is the first mint and pool is not initialized
+    if (
+      !this.xyk_pool.has_liquidity() &&
+      foreign_in < this.min_initial_foreign
+    ) {
+      throw new Error(
+        `Initial mint requires minimum ${this.min_initial_foreign} foreign tokens`,
+      );
     }
-    const { net } = this.#preview_fee(foreign_amount);
+    const { fee, net } = this.#calculate_fee(foreign_in);
     if (net <= 0n) {
       throw new Error("Amount too small");
     }
-    const utbc_quote = this.utbc_minter.preview(net);
-    const utbc_out = utbc_quote?.user ?? 0n;
-    const xyk_out = this.xyk_pool.get_out_native(net);
-    const can_utbc = utbc_quote && utbc_out >= native_min;
-    const can_xyk = xyk_out >= native_min;
-    if (!can_utbc && !can_xyk) {
-      throw new Error("Slippage exceeded");
-    }
-    const { fee, net: net_after_fee } = this.#apply_fee(foreign_amount);
-    const use_utbc = can_utbc && utbc_out >= xyk_out;
-    if (use_utbc) {
-      const mint_result = this.utbc_minter.mint(net_after_fee);
-      return {
-        route: "UTBC",
-        out: mint_result.user_native,
-        foreign_amount,
-        net: net_after_fee,
-        fee,
-        price_before: mint_result.price_before,
-        price_after: mint_result.price_after,
-        pol: mint_result.pol,
-      };
-    } else {
-      const swap = this.xyk_pool.swap_foreign_to_native(
-        net_after_fee,
-        native_min,
-      );
-      return {
-        route: "XYK",
-        out: swap.amount_out,
-        foreign_amount,
-        net: net_after_fee,
-        fee,
-        price_before: swap.price_before,
-        price_after: swap.price_after,
-        impact_ppm: swap.impact_ppm,
-      };
-    }
+    const { use_utbc } = this.#select_best_route(net, native_min);
+    this.fee_manager.receive_fee_foreign(fee);
+    return use_utbc
+      ? this.#execute_utbc_route(net, foreign_in, fee)
+      : this.#execute_xyk_route(net, foreign_in, fee, native_min);
   }
 
   swap_native_to_foreign(
-    /** @type {bigint} */ native_amount,
+    /** @type {bigint} */ native_in,
     /** @type {bigint} */ foreign_min = 0n,
   ) {
-    if (native_amount <= 0n) {
-      throw new Error("Amount must be positive");
+    this.#validate_swap_input(native_in, 1n, "Amount must be positive");
+    if (!this.xyk_pool.has_liquidity()) {
+      throw new Error(
+        "Pool not initialized. Cannot sell native tokens before initial liquidity",
+      );
     }
-    const pre_fee_out = this.xyk_pool.get_out_foreign(native_amount);
-    if (pre_fee_out === 0n) {
-      throw new Error("No liquidity");
+    const price_spot = this.xyk_pool.get_price();
+    if (price_spot === 0n) {
+      throw new Error("Invalid pool state: no native reserves");
     }
-    const fee_factor = PPM - this.fee_ppm;
-    const out_pre_fee_min =
-      foreign_min > 0n ? div_ceil(foreign_min * PPM, fee_factor) : 0n;
-    if (pre_fee_out < out_pre_fee_min) {
-      const actual_out = mul_div(pre_fee_out, fee_factor, PPM);
-      throw new Error(`Slippage: ${actual_out} < ${foreign_min}`);
+    const native_as_foreign = BigMath.mul_div(native_in, price_spot, PRECISION);
+    if (native_as_foreign < this.min_trade_foreign) {
+      throw new Error(
+        `Amount below minimum threshold (${this.min_trade_foreign} foreign equivalent)`,
+      );
     }
     const swap_result = this.xyk_pool.swap_native_to_foreign(
-      native_amount,
-      out_pre_fee_min,
+      native_in,
+      foreign_min,
     );
-    const { fee, net } = this.#apply_fee(swap_result.amount_out);
     return {
       route: "XYK",
-      out: net,
-      native_amount,
-      fee,
+      foreign_out: swap_result.foreign_out,
+      native_in: native_in,
+      native_fee: 0n,
+      native_net: native_in,
       price_before: swap_result.price_before,
       price_after: swap_result.price_after,
-      impact_ppm: swap_result.impact_ppm,
+      price_impact_ppm: swap_result.price_impact_ppm,
     };
   }
 
-  #apply_fee(/** @type {bigint} */ amount_gross) {
-    const fee = mul_div(amount_gross, this.fee_ppm, PPM);
-    this.accumulated_fee += fee;
-    return { fee, net: amount_gross - fee };
+  #validate_swap_input(
+    /** @type {bigint} */ amount,
+    /** @type {bigint} */ min_threshold,
+    /** @type {string} */ error_msg,
+  ) {
+    if (amount <= 0n) {
+      throw new Error("Amount must be positive");
+    }
+    if (amount < min_threshold) {
+      throw new Error(error_msg);
+    }
   }
 
-  #preview_fee(/** @type {bigint} */ amount_gross) {
-    const fee = mul_div(amount_gross, this.fee_ppm, PPM);
-    return { fee, net: amount_gross - fee };
+  #select_best_route(
+    /** @type {bigint} */ net,
+    /** @type {bigint} */ native_min,
+  ) {
+    const utbc_quote = this.utbc_minter.get_mint_quote(net);
+    const utbc_out = utbc_quote?.user ?? 0n;
+    const xyk_out = this.xyk_pool.has_liquidity()
+      ? this.xyk_pool.get_out_native(net)
+      : 0n;
+    const can_utbc = utbc_quote && utbc_out >= native_min;
+    const can_xyk = this.xyk_pool.has_liquidity() && xyk_out >= native_min;
+    if (!can_utbc && !can_xyk) {
+      throw new Error("Slippage exceeded");
+    }
+    return {
+      use_utbc: can_utbc && utbc_out >= xyk_out,
+      utbc_quote,
+      xyk_out,
+    };
+  }
+
+  #execute_utbc_route(
+    /** @type {bigint} */ net,
+    /** @type {bigint} */ foreign_in,
+    /** @type {bigint} */ fee,
+  ) {
+    const mint_result = this.utbc_minter.mint_native(net);
+    return {
+      route: "UTBC",
+      native_out: mint_result.user_native,
+      foreign_in: foreign_in,
+      foreign_net: net,
+      foreign_fee: fee,
+      price_before: mint_result.price_before,
+      price_after: mint_result.price_after,
+      pol: mint_result.pol,
+    };
+  }
+
+  #execute_xyk_route(
+    /** @type {bigint} */ net,
+    /** @type {bigint} */ foreign_in,
+    /** @type {bigint} */ fee,
+    /** @type {bigint} */ native_min,
+  ) {
+    const swap_result = this.xyk_pool.swap_foreign_to_native(net, native_min);
+    return {
+      route: "XYK",
+      native_out: swap_result.native_out,
+      foreign_in: foreign_in,
+      foreign_net: net,
+      foreign_fee: fee,
+      price_before: swap_result.price_before,
+      price_after: swap_result.price_after,
+      price_impact_ppm: swap_result.price_impact_ppm,
+    };
+  }
+
+  #calculate_fee(/** @type {bigint} */ amount) {
+    const fee = BigMath.mul_div(amount, this.fee_router_ppm, PPM);
+    const net = amount - fee;
+    return { fee, net };
   }
 }
 
@@ -600,14 +856,20 @@ export const create_system = (
 ) => {
   const config = { ...DEFAULT_CONFIG, ...user_config };
   const xyk_pool = new XykPool({ fee_ppm: config.fee_xyk_ppm });
-  const pol_manager = new PolManager(xyk_pool, new AllInZap());
+  const pol_manager = new PolManager(xyk_pool);
   const utbc_minter = new UtbcMinter(pol_manager, {
     price_initial: config.price_initial,
     slope_ppm: config.slope_ppm,
     shares: config.shares,
   });
-  const router = new SmartRouter(xyk_pool, utbc_minter, {
-    fee_router_ppm: config.fee_router_ppm,
+  const fee_manager = new FeeManager(xyk_pool, utbc_minter, {
+    min_trade_foreign: config.min_trade_foreign,
   });
-  return { xyk_pool, pol_manager, utbc_minter, router };
+  const router = new SmartRouter(xyk_pool, utbc_minter, fee_manager, {
+    fee_router_ppm: config.fee_router_ppm,
+    min_trade_foreign: config.min_trade_foreign,
+    min_initial_foreign: config.min_initial_foreign,
+  });
+  pol_manager.set_swapper(router);
+  return { xyk_pool, pol_manager, utbc_minter, router, fee_manager };
 };
