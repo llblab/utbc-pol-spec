@@ -5,7 +5,7 @@
  * Tests all components, formulas, edge cases, and parameter boundaries
  */
 
-import { create_system, PRECISION, PPM, BigMath } from "./simulator.js";
+import { create_system, PRECISION, PPM, BigMath } from "./model.js";
 
 const formatPrice = (price) => (Number(price) / Number(PRECISION)).toFixed(9);
 const formatSupply = (supply) =>

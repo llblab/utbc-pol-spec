@@ -1,3 +1,5 @@
+`work in progress`
+
 # `UTBC+POL`: Unidirectional Token Bonding Curve + Protocol Owned Liquidity
 
 A token launch mechanism that combines unidirectional bonding curves with automatic liquidity generation.
@@ -25,5 +27,5 @@ The result is a self-reinforcing system where growth in demand directly translat
 
 ## Resources
 
-- **[Specification](./UTBC+POL%20spec.%20v1.1.0.md)** - Technical implementation details and economic analysis
-- **[Simulator](./simulator.js)** - Interactive tokenomics modeling tool
+- **[Specification](./docs/utbc+pol-spec.en.md)** - Technical implementation details and economic analysis
+- **[Simulator](./simulator/model.js)** - Interactive tokenomics modeling tool

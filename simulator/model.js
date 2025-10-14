@@ -4,8 +4,8 @@
  * @name `UTBC+POL` Simulator
  * @note This simulator serves for preliminary economic testing, parameter optimization, and business logic formalization of composite tokenomics models.
  * @units Balances and prices use `PRECISION` (10^12) for accuracy. All fractional values (fees, slopes, shares) use `PPM` (Parts Per Million, 10^6) and require a '_ppm' suffix in naming.
- * @version 1.2.0
- * @module simulator.js
+ * @version 1.3.0
+ * @module model.js
  */
 
 /** @typedef {{ user_ppm: bigint, pol_ppm: bigint, treasury_ppm: bigint, team_ppm: bigint }} ShareConfig */
